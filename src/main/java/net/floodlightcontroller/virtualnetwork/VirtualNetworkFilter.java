@@ -64,9 +64,13 @@ import net.floodlightcontroller.util.MACAddress;
  * you to create simple L2 networks (host + gateway) and will drop traffic if
  * they are not on the same virtual network.
  * 
+ * 一个二层(基于MAC地址)的虚拟网络模块.允许用户创建二层网络(host+gateway),不在同一个虚拟网络中的通信会被丢弃.
+ * 
  * LIMITATIONS
  * - This module does not allow overlapping of IPs or MACs
+ * - 不允许重复使用IP地址和MAC地址
  * - You can only have 1 gateway per virtual network (can be shared)
+ * - 每个虚拟网络只能共享1个网关
  * - There is filtering of multicast/broadcast traffic
  * - All DHCP traffic will be allowed, regardless of unicast/broadcast
  * 
@@ -149,7 +153,7 @@ public class VirtualNetworkFilter
             log.debug("Creating network {} with ID {} and gateway {}", 
                       new Object[] {network, guid, gw});
         }
-        
+        //为了支持更改以后的网络,将于需要"创建"的网络guid相同的Network删除
         if (!nameToGuid.isEmpty()) {
             // We have to iterate all the networks to handle name/gateway changes
             for (Entry<String, String> entry : nameToGuid.entrySet()) {
@@ -159,8 +163,10 @@ public class VirtualNetworkFilter
                 }
             }
         }
+        //在nameToGuid表中加入表项（网络名：network--网络ID：guid）
         if(network != null)
             nameToGuid.put(network, guid);
+        //修改vNetsByGuid表项，创建/更新GUID对应的VirtualNetwork的名字
         if (vNetsByGuid.containsKey(guid))
             vNetsByGuid.get(guid).setName(network); //network already exists, just updating name
         else

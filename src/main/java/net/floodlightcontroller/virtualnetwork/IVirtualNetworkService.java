@@ -27,7 +27,7 @@ public interface IVirtualNetworkService extends IFloodlightService {
      * and the fields you want to update.
      * @param network The network name. Must be unique.
      * @param guid The ID of the network. Must be unique.
-     * @param gateway The IP address of the network gateway, null if none.
+     * @param gateway The IP address of the network gateway, null if none. 其中的IP地址为Integer型变量，可以通过int net.floodlightcontroller.packet.IPv4.toIPv4Address(String ipAddress)完成转换
      */
     public void createNetwork(String guid, String network, Integer gateway);
     
@@ -49,7 +49,7 @@ public interface IVirtualNetworkService extends IFloodlightService {
     /**
      * Deletes a host from a virtual network. Either the MAC or Port must
      * be specified.
-     * @param mac The MAC address to delete.
+     * @param mac The MAC address to delete. 可以通过MACAddress.valueOf(String)静态函数完成转换
      * @param port The logical port the host is attached to.
      */
     public void deleteHost(MACAddress mac, String port);
