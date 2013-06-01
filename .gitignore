@@ -1,8 +1,5 @@
 *~
 *.class
-.classpath
-.project
-.settings/
 .pydevproject
 .settings
 .DS_Store
@@ -11,4 +8,3 @@ thrift
 *.swp
 *.pyc
 findbugs-results
-*.launch
