@@ -5,21 +5,22 @@ from mininet.log import setLogLevel
 from mininet.cli import CLI
 from mininet.node import RemoteController
 
-class SingleSwitchTopo(Topo):
+class MyTopo(Topo):
     "Single switch connected to n hosts."
-    def __init__(self, n=2, **opts):
+    def __init__(self, **opts):
         # Initialize topology and default options
         Topo.__init__(self, **opts)
+	# Add switch
         switch = self.addSwitch('s1')
-        # Python's range(N) generates 0..N-1
-        for h in range(n):
+        # Add hosts
+        for h in range(4):
             host = self.addHost('h%s' % (h + 1), mac='00:00:00:00:00:0%s' % (h+1))
-            self.addLink(host, switch)
+            self.addLink(host, switch , 1 , h+1)
 
-def simpleTest():
+def MyTest():
     "Create and test a simple network"
-    topo = SingleSwitchTopo(n=4)
-    net = Mininet( topo=topo, controller=lambda name: RemoteController( name, ip='192.168.221.1' ) )
+    topo = MyTopo()
+    net = Mininet( topo=topo, controller=lambda name: RemoteController( name, ip='192.168.86.1' ) )
     net.start()
     host = net.get('h1')
     CLI(net)
@@ -28,4 +29,4 @@ def simpleTest():
 if __name__ == '__main__':
     # Tell mininet to print useful information
     setLogLevel('info')
-    simpleTest()
+    MyTest()
