@@ -58,9 +58,9 @@ public interface IRoutingService extends IFloodlightService {
 
     /** 
      * Provides a route between srcPort on src and dstPort on dst.
-     * @param src Source switch DPID.
+     * @param srcId Source switch DPID.
      * @param srcPort Source port on source switch.
-     * @param dst Destination switch DPID.
+     * @param dstId Destination switch DPID.
      * @param dstPort dstPort on Destination switch.
      * @param cookie cookie (usage determined by implementation; ignored by topology instance now).
      * @param tunnelEnabled boolean option.

@@ -27,7 +27,12 @@ import net.floodlightcontroller.core.module.IFloodlightService;
 /**
  * Device manager allows interacting with devices on the network.  Note
  * that under normal circumstances, {@link Device} objects should be retrieved
- * from the {@link FloodlightContext} rather than from {@link IDeviceManager}.
+ * from the {@link FloodlightContext} rather than from {@link IDeviceManager}.<br>
+ * IDeviceService提供的主要功能：<br>
+ * 1. 监听器：IDeviceListener（Device的增、减、IP、VLAN的变化）<br>
+ * 2. 存储的IDevice，为静态变量fcStore <br>
+ * 3. 获取IDevice<br>
+ * 4. ……
  */
 public interface IDeviceService extends IFloodlightService {
 

@@ -308,7 +308,7 @@ public interface IOFSwitch {
      */
     void deliverOFFeaturesReply(OFMessage reply);
 
-    /*
+    /**
      * Cancel features reply with a specific transction ID
      * @param transactionId the transaction ID
      */

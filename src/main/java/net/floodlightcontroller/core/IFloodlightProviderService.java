@@ -29,7 +29,13 @@ import org.openflow.protocol.factory.BasicFactory;
 
 /**
  * The interface exposed by the core bundle that allows you to interact
- * with connected switches.
+ * with connected switches.<br>
+ * IFloodlightProviderService提供的主要功能：<br>
+ * 1. 监听器：IOFMessageListener（数据包）、IOFSwitchListener（Switch的增加减少）、IHAListener（在OF1.2中Controller的Role变化）<br>
+ * 2. 存储的Packet-in的payload，为静态变量bcStore<br>
+ * 3. getSwitches()获得所有连接的Switch<br>
+ * 4. getOFMessageFactory()获得构建OpenFlow包的工厂类，得到的包，最后可以通过OFMessageDamper写入，或Switch.write方法写入<br>
+ * 5. 其他……
  *
  * @author David Erickson (daviderickson@cs.stanford.edu)
  */
