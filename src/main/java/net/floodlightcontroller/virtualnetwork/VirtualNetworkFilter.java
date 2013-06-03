@@ -327,6 +327,7 @@ public class VirtualNetworkFilter
     }
 
     // IOFMessageListener
+    // 以下两个函数，isCallbackOrderingPrereq和isCallbackOrderingPostreq提供了信息分发顺序的控制，此VLAN模块需要在链路发现之后，而在转发之前
     
     @Override
     public String getName() {
