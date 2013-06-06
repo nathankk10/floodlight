@@ -85,7 +85,9 @@ public interface IFloodlightProviderService extends
     /**
      * Returns an unmodifiable map of all actively connected OpenFlow switches. This doesn't
      * contain switches that are connected but the controller's in the slave role.
-     * @return the set of actively connected switches
+     * 返回的Map中元素遍历输出多组数据，每个元素为：Switch:OFSwitchBase [/192.168.221.130:49937 DPID[00:00:00:00:00:00:00:03]]
+     * @return the set of actively connected switches<br>
+     * Map的Key是Long IOFSwitch.getId()，Value是IOFSwitch
      */
     public Map<Long, IOFSwitch> getSwitches();
     

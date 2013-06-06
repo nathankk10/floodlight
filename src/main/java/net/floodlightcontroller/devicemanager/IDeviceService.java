@@ -132,6 +132,7 @@ public interface IDeviceService extends IFloodlightService {
 
     /**
      * Get an unmodifiable collection view over all devices currently known.
+     * 获得所有接入的设备（不含路由器）
      * @return the collection of all devices
      */
     public Collection<? extends IDevice> getAllDevices();

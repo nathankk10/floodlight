@@ -22,7 +22,10 @@ import org.jboss.netty.buffer.ChannelBuffer;
 import org.openflow.protocol.OFMatch;
 
 /**
- * Represents an ofp_flow_stats_request structure
+ * Represents an ofp_flow_stats_request structure<br>
+ * 生成一个ofp_flow_stats_request，用以获得每条flow的信息<br>
+ * 下一步：setMatch，setTableId，setOutPort<br>
+ * 最后：加入OFStatisticsRequest中，并修改其长度！
  * @author David Erickson (daviderickson@cs.stanford.edu)
  */
 public class OFFlowStatisticsRequest implements OFStatistics {
@@ -51,8 +54,8 @@ public class OFFlowStatisticsRequest implements OFStatistics {
         return tableId;
     }
 
-    /**
-     * @param tableId the tableId to set
+    /**ID of table to read (from ofp_table_stats)
+     * @param tableId the tableId to set, 0xFF for all tables
      */
     public void setTableId(byte tableId) {
         this.tableId = tableId;
@@ -66,7 +69,9 @@ public class OFFlowStatisticsRequest implements OFStatistics {
     }
 
     /**
-     * @param outPort the outPort to set
+     * Require matching entries to include this as an output port.  A value of OFPP_ANY indicates no restriction.
+     * @param outPort the outPort to set<br>
+     * 输出端口，OFPort.OFPP_NONE则没有限制
      */
     public void setOutPort(short outPort) {
         this.outPort = outPort;

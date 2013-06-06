@@ -117,6 +117,7 @@ public class OFMatch implements Cloneable, Serializable {
     /**
      * By default, create a OFMatch that matches everything (mostly because it's
      * the least amount of work to make a valid OFMatch)
+     * 生成的OFMatch可以任意匹配－matches everything！
      */
     public OFMatch() {
         this.wildcards = OFPFW_ALL;
