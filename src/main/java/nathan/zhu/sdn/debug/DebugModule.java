@@ -19,9 +19,12 @@ import net.floodlightcontroller.core.module.FloodlightModuleContext;
 import net.floodlightcontroller.core.module.FloodlightModuleException;
 import net.floodlightcontroller.core.module.IFloodlightModule;
 import net.floodlightcontroller.core.module.IFloodlightService;
+import net.floodlightcontroller.devicemanager.IDevice;
 import net.floodlightcontroller.devicemanager.IDeviceService;
 import net.floodlightcontroller.linkdiscovery.ILinkDiscoveryService;
+import net.floodlightcontroller.linkdiscovery.LinkInfo;
 import net.floodlightcontroller.restserver.IRestApiService;
+import net.floodlightcontroller.routing.Link;
 import net.floodlightcontroller.topology.ITopologyService;
 
 import org.openflow.protocol.OFMatch;
@@ -66,7 +69,7 @@ public class DebugModule implements IFloodlightModule,INDebugService {
 			logger.debug("Got Switch: {}",sw);
 			
 			// 此处测试各类OFStatistics
-			boolean ofp_desc_stats=false;
+			boolean ofp_desc_stats=true;
 			boolean ofp_flow_stat = true;
 			// ofp_desc_stat
 			if (ofp_desc_stats){
@@ -126,7 +129,7 @@ public class DebugModule implements IFloodlightModule,INDebugService {
 			
 			
 		}
-		/*
+		
 		// obtain all attached devices from IDeviceService
 		Collection<? extends IDevice> devices = deviceService.getAllDevices();
 		Iterator<? extends IDevice> dev_iter = devices.iterator();
@@ -143,7 +146,7 @@ public class DebugModule implements IFloodlightModule,INDebugService {
 			Link link = link_iter.next();
 			logger.info("Got Link: {}"+link);
 		}
-		*/
+		
 	}
 
 	//

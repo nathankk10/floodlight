@@ -901,9 +901,10 @@ public class TopologyManager implements
      * The BDDP packets are forwarded out of all the ports out of an
      * openflowdomain.  Get all the switches in the same openflow
      * domain as the sw (disabling tunnels).  Then get all the
-     * external switch ports and send these packets out.
-     * @param sw
-     * @param pi
+     * external switch ports and send these packets out.<br>
+     * 将BDDP包pi向所有ports（除去数据包进入的该Switch的port，除去禁用广播的ports）发送，即向所有switch发送PacketOut Message
+     * @param pinSwitch PacketInSwitch，即数据包进入的Switch
+     * @param pi packet_in
      * @param cntx
      */
     protected void doFloodBDDP(long pinSwitch, OFPacketIn pi,
@@ -960,6 +961,14 @@ public class TopologyManager implements
 
     }
 
+    
+    /**
+     * 当从FloodlightProvider处有packet_in事件时，调用此函数，若packet_in是BSN LLDP，则doFloodBBDP(sw.getId(),pi,cntx)将该LLDP包发送至所有端口
+     * @param sw packet_in的路由器
+     * @param pi packet_in
+     * @param cntx
+     * @return
+     */
     protected Command processPacketInMessage(IOFSwitch sw, OFPacketIn pi,
                                              FloodlightContext cntx) {
 

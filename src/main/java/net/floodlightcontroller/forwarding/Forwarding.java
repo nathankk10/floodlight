@@ -74,6 +74,7 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule {
         
         // If a decision has been made we obey it
         // otherwise we just forward
+        // 遵从给出的IRoutingDecision
         if (decision != null) {
             if (log.isTraceEnabled()) {
                 log.trace("Forwaring decision={} was made for PacketIn={}",
@@ -102,6 +103,7 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule {
                     return Command.CONTINUE;
             }
         } else {
+        	// 没有给出任何IRoutingDecision，判断是否是广播，还是转发
             if (log.isTraceEnabled()) {
                 log.trace("No decision was made for PacketIn={}, forwarding",
                         pi);
@@ -118,6 +120,13 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule {
         return Command.CONTINUE;
     }
     
+    /**
+     * 创建drop该packet的流表，根据该packet创建match，向sw写入actions为空（即drop）的flow
+     * @param sw
+     * @param pi
+     * @param decision
+     * @param cntx
+     */
     @LogMessageDoc(level="ERROR",
             message="Failure writing drop flow mod",
             explanation="An I/O error occured while trying to write a " +
@@ -125,6 +134,7 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule {
             recommendation=LogMessageDoc.CHECK_SWITCH)
     protected void doDropFlow(IOFSwitch sw, OFPacketIn pi, IRoutingDecision decision, FloodlightContext cntx) {
         // initialize match structure and populate it using the packet
+    	// 通过packet_in中信息创建match
         OFMatch match = new OFMatch();
         match.loadFromPacket(pi.getPacketData(), pi.getInPort());
         if (decision.getWildcards() != null) {
@@ -132,11 +142,11 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule {
         }
         
         // Create flow-mod based on packet-in and src-switch
+        // 新建flow－mod指令，使用上述match，actions为空表示drop，通过messageDamper向switch写入流表
         OFFlowMod fm =
                 (OFFlowMod) floodlightProvider.getOFMessageFactory()
                                               .getMessage(OFType.FLOW_MOD);
-        List<OFAction> actions = new ArrayList<OFAction>(); // Set no action to
-                                                            // drop
+        List<OFAction> actions = new ArrayList<OFAction>(); //actions列表为空，表示drop
         long cookie = AppCookie.makeCookie(FORWARDING_APP_ID, 0);
         
         fm.setCookie(cookie)
@@ -152,12 +162,19 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule {
                 log.debug("write drop flow-mod sw={} match={} flow-mod={}",
                           new Object[] { sw, match, fm });
             }
-            messageDamper.write(sw, fm, cntx);
+            messageDamper.write(sw, fm, cntx);	//messageDamper仅在之前n ms内为写入过相同的flow时才写入
         } catch (IOException e) {
             log.error("Failure writing drop flow mod", e);
         }
     }
     
+    /**
+     * 写入转发的流表
+     * @param sw packet的来源Swtich
+     * @param pi 传入的packet
+     * @param cntx
+     * @param requestFlowRemovedNotifn Swtich是否需要在删除产生的flow时通知controller
+     */
     protected void doForwardFlow(IOFSwitch sw, OFPacketIn pi, 
                                  FloodlightContext cntx,
                                  boolean requestFlowRemovedNotifn) {    
@@ -165,6 +182,7 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule {
         match.loadFromPacket(pi.getPacketData(), pi.getInPort());
 
         // Check if we have the location of the destination
+        // IDeviceService.CONTEXT_DST_DEVICE 可能存储着之前处理时获得的该packet_in的目的设备
         IDevice dstDevice = 
                 IDeviceService.fcStore.
                     get(cntx, IDeviceService.CONTEXT_DST_DEVICE);
@@ -189,6 +207,7 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule {
             // Validate that the source and destination are not on the same switchport
             boolean on_same_island = false;
             boolean on_same_if = false;
+            // 判断dstDevice的各个AttachmentPoint对应的Switch是否与上述switch处在同一个L2Domain
             for (SwitchPort dstDap : dstDevice.getAttachmentPoints()) {
                 long dstSwDpid = dstDap.getSwitchDPID();
                 Long dstIsland = topology.getL2DomainId(dstSwDpid);
@@ -202,6 +221,7 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule {
                 }
             }
             
+            // 如果不在同一个L2Domain，则flood
             if (!on_same_island) {
                 // Flood since we don't know the dst device
                 if (log.isTraceEnabled()) {
@@ -231,6 +251,7 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule {
 
             int iSrcDaps = 0, iDstDaps = 0;
 
+            // 遍历srcDevice和dstDevice所连接的所有Switch
             while ((iSrcDaps < srcDaps.length) && (iDstDaps < dstDaps.length)) {
                 SwitchPort srcDap = srcDaps[iSrcDaps];
                 SwitchPort dstDap = dstDaps[iDstDaps];
@@ -243,8 +264,10 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule {
                         topology.getL2DomainId(dstDap.getSwitchDPID());
 
                 int srcVsDest = srcCluster.compareTo(dstCluster);
+                // 只有当两个switch处在同一个L2Domain时才能够转发
                 if (srcVsDest == 0) {
                     if (!srcDap.equals(dstDap)) {
+                    	// 遍历中的源AP和目的AP不同
                         Route route = 
                                 routingEngine.getRoute(srcDap.getSwitchDPID(),
                                                        (short)srcDap.getPort(),
@@ -274,7 +297,7 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule {
                             } else {
                             	// L2 only wildcard if there is no prior route decision
                                 wildcard_hints = ((Integer) sw
-                                        .getAttribute(IOFSwitch.PROP_FASTWILDCARDS))
+                                        .getAttribute(IOFSwitch.PROP_FASTWILDCARDS)) //得到match就是OFMatch.OFPFW_ALL
                                         .intValue()
                                         & ~OFMatch.OFPFW_IN_PORT
                                         & ~OFMatch.OFPFW_DL_VLAN
@@ -297,7 +320,7 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule {
                     iDstDaps++;
                 }
             }
-        } else {
+        } else { // 对应 if (dstDevice != null)
             // Flood since we don't know the dst device
             doFlood(sw, pi, cntx);
         }

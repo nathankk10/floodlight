@@ -49,7 +49,7 @@ public interface IOFSwitch {
     public static final String SWITCH_DESCRIPTION_DATA = "DescriptionData";
     public static final String SWITCH_SUPPORTS_NX_ROLE = "supportsNxRole";
     public static final String SWITCH_IS_CORE_SWITCH = "isCoreSwitch";
-    public static final String PROP_FASTWILDCARDS = "FastWildcards";
+    public static final String PROP_FASTWILDCARDS = "FastWildcards"; //¼´£½OFMatch.OFPFW_ALL
     public static final String PROP_REQUIRES_L3_MATCH = "requiresL3Match";
     public static final String PROP_SUPPORTS_OFPP_TABLE = "supportsOfppTable";
     public static final String PROP_SUPPORTS_OFPP_FLOOD = "supportsOfppFlood";

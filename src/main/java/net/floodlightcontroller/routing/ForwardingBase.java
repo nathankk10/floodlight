@@ -136,6 +136,8 @@ public abstract class ForwardingBase
     /**
      * All subclasses must define this function if they want any specific
      * forwarding action
+     * <br><br>
+     * 调用流程：ForwardingBase收到FloodlightProvider的Packet_in，查询是否存在IRoutingDecision（没有则为null），调用该函数
      * 
      * @param sw
      *            Switch that the packet came in from
@@ -148,7 +150,8 @@ public abstract class ForwardingBase
             processPacketInMessage(IOFSwitch sw, OFPacketIn pi,
                                    IRoutingDecision decision,
                                    FloodlightContext cntx);
-
+    
+    
     @Override
     public Command receive(IOFSwitch sw, OFMessage msg,
                            FloodlightContext cntx) {
@@ -159,7 +162,10 @@ public abstract class ForwardingBase
                      decision =
                              IRoutingDecision.rtStore.get(cntx,
                                                           IRoutingDecision.CONTEXT_DECISION);
-
+                //可能存在已经通过IRoutingDecision.addToContext()将IRoutingDesicion加入到cntx中，则遵从该决定
+                //从现有的代码中搜索，仅在firewall模块对此有应用
+                
+                //调用用户实现的函数处理packet_in
                 return this.processPacketInMessage(sw,
                                                    (OFPacketIn) msg,
                                                    decision,
