@@ -33,7 +33,7 @@ public class MACAddress {
 
     /**
      * Returns a MAC address instance representing the value of the specified {@code String}.
-     * @param address the String representation of the MAC Address to be parsed. 需要是12位HEX - XX:XX:XX:XX:XX:XX
+     * @param address the String representation of the MAC Address to be parsed.
      * @return a MAC Address instance representing the value of the specified {@code String}.
      * @throws IllegalArgumentException if the string cannot be parsed as a MAC address.
      */

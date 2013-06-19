@@ -164,7 +164,7 @@ public class DebugModule implements IFloodlightModule,INDebugService {
 	public Map<Class<? extends IFloodlightService>, IFloodlightService> getServiceImpls() {
 		// 模块提供服务的实例
 		Map<Class<? extends IFloodlightService>,IFloodlightService> m = new HashMap<Class<? extends IFloodlightService>,IFloodlightService>();
-        m.put(INDebugService.class, this);	//自己this就是提供服务的INDebugService的类
+        m.put(INDebugService.class, this);
         return m;
 	}
 

@@ -28,4 +28,3 @@ net.floodlightcontroller.core.test.MockThreadPoolService
 net.floodlightcontroller.firewall.Firewall
 net.floodlightcontroller.loadbalancer.LoadBalancer
 nathan.zhu.sdn.debug.DebugModule
-nathan.zhu.sdn.loadbalancer.NLoadBalancer
