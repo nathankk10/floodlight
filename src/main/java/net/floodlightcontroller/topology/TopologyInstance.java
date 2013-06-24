@@ -20,7 +20,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -28,19 +27,20 @@ import java.util.PriorityQueue;
 import java.util.Set;
 import java.util.Stack;
 
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import net.floodlightcontroller.util.ClusterDFS;
 import net.floodlightcontroller.core.annotations.LogMessageCategory;
 import net.floodlightcontroller.core.annotations.LogMessageDoc;
 import net.floodlightcontroller.routing.BroadcastTree;
 import net.floodlightcontroller.routing.Link;
 import net.floodlightcontroller.routing.Route;
 import net.floodlightcontroller.routing.RouteId;
-import com.google.common.cache.*;
-import com.sun.org.apache.bcel.internal.generic.NEW;
+import net.floodlightcontroller.util.ClusterDFS;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.google.common.cache.CacheBuilder;
+import com.google.common.cache.CacheLoader;
+import com.google.common.cache.LoadingCache;
 
 /**
  * A representation of a network topology.  Used internally by
@@ -666,7 +666,6 @@ public class TopologyInstance {
     protected Route getRoute(long srcId, short srcPort,
                              long dstId, short dstPort, long cookie) {
 
-
         // Return null the route source and desitnation are the
         // same switchports.
         if (srcId == dstId && srcPort == dstPort)
@@ -698,8 +697,7 @@ public class TopologyInstance {
     protected Route getRoute(long srcId, long dstId, long cookie) {
         // Return null route if srcId equals dstId
         if (srcId == dstId) return null;
-
-
+        
         RouteId id = new RouteId(srcId, dstId);
         Route result = null;
 
@@ -838,13 +836,11 @@ public class TopologyInstance {
     public NodePortTuple
     getAllowedOutgoingBroadcastPort(long src, short srcPort, long dst,
                                     short dstPort) {
-        // TODO Auto-generated method stub
         return null;
     }
 
     public NodePortTuple
     getAllowedIncomingBroadcastPort(long src, short srcPort) {
-        // TODO Auto-generated method stub
         return null;
     }
 
@@ -855,7 +851,8 @@ public class TopologyInstance {
      * @return 所有路径从srcId到dstId的所有路径
      */
     protected ArrayList<Route> getRoutes(long srcDpid, long dstDpid){   
-        if (srcDpid== dstDpid)
+        
+    	if (srcDpid== dstDpid)
             return null;
         ArrayList<Route> routes = new ArrayList<Route>();
         
@@ -868,20 +865,31 @@ public class TopologyInstance {
         while(true){
         	//获得当前结点的所有子节点
         	Set<Short> nextPortsSet = switchPorts.get(current.nodeId);
-        	Short[] nextPorts = (Short[]) nextPortsSet.toArray();
+        	Short[] nextPorts = new Short[nextPortsSet.size()];
+        	nextPortsSet.toArray(nextPorts);
         	Arrays.sort(nextPorts);
         	//找出符合要求的下一个结点
         	short suitableNextPort = -1;
         	for (short nextPort:nextPorts){
         		if (nextPort<=current.portId) continue;
-        		// TODO 下一个Switch没有访问过
-        		
-        		break;
+        		// 下一跳Switch没有访问过，则作为遍历的下一结点
+        		Set<Link> links = switchPortLinks.get(new NodePortTuple(current.nodeId, nextPort));
+        		for (Link link:links){
+        			Long dstNode = link.getDst();
+        			if ((dstNode!=current.nodeId) && (!(visitedNode.contains(dstNode))) ){
+        				suitableNextPort = nextPort;
+        				break;
+        			}
+        		}
+        		if (suitableNextPort!=-1) break;
         	}
         	//没找到符合要求的结点，则深度退回
         	if (suitableNextPort==-1){
         		if (visitedNodePortTuple.empty()) break; //堆栈为空，则完成了遍历
         		current = visitedNodePortTuple.pop();
+        		visitedNode.pop();
+        		routeLinks.removeLast();
+        		routeLinks.removeLast();
         		continue; //堆栈不为空，则以栈顶的结点为当前结点，继续遍历
         	}else{
         		//将得到的链路加入Path的链表中
@@ -896,10 +904,11 @@ public class TopologyInstance {
         				break;
         			}
         		}
-        		//结点是否为dst？
+        		//结点是否为dstDpid？
         		if (nextNodePortTuple.nodeId==dstDpid){
         			//如果是，则生成一个Route，加入到ArrayList中
-        			Route route = new Route(new RouteId(srcDpid, dstDpid),(List<NodePortTuple>) routeLinks.clone());
+        			@SuppressWarnings("unchecked")
+					Route route = new Route(new RouteId(srcDpid, dstDpid),(LinkedList<NodePortTuple>) routeLinks.clone());
         			routes.add(route);
         			//深度退出，1.删除routeLinks中最后添加的两个 2.更改current
         			routeLinks.removeLast();
@@ -908,13 +917,12 @@ public class TopologyInstance {
         			continue;
         		}else{
         			visitedNodePortTuple.push(new NodePortTuple(current.nodeId, suitableNextPort));
+        			visitedNode.push(current.nodeId);
         			current = new NodePortTuple(nextNodePortTuple.nodeId, (short)-1);
         			continue;
         		}
         	}
-        	
         }
-        
     	return routes;
     }
     
