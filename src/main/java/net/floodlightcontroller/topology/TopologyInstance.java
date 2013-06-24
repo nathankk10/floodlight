@@ -40,6 +40,7 @@ import net.floodlightcontroller.routing.Link;
 import net.floodlightcontroller.routing.Route;
 import net.floodlightcontroller.routing.RouteId;
 import com.google.common.cache.*;
+import com.sun.org.apache.bcel.internal.generic.NEW;
 
 /**
  * A representation of a network topology.  Used internally by
@@ -859,11 +860,10 @@ public class TopologyInstance {
         ArrayList<Route> routes = new ArrayList<Route>();
         
         Stack<NodePortTuple> visitedNodePortTuple = new Stack<NodePortTuple>();
+        Stack<Long> visitedNode = new Stack<Long>();
         LinkedList<NodePortTuple> routeLinks = new LinkedList<NodePortTuple>();
         
         NodePortTuple current = new NodePortTuple(srcDpid, (short)-1);
-        visitedNodePortTuple.push(current);
-        NodePortTuple tempNode = new NodePortTuple(0, 0);
         
         while(true){
         	//获得当前结点的所有子节点
@@ -874,17 +874,14 @@ public class TopologyInstance {
         	short suitableNextPort = -1;
         	for (short nextPort:nextPorts){
         		if (nextPort<=current.portId) continue;
-        		tempNode.nodeId = current.nodeId;
-        		tempNode.portId = nextPort;
-        		if (visitedNodePortTuple.contains(tempNode)) continue;
-        		suitableNextPort = nextPort;
+        		// TODO 下一个Switch没有访问过
+        		
         		break;
         	}
         	//没找到符合要求的结点，则深度退回
         	if (suitableNextPort==-1){
-        		visitedNodePortTuple.pop();
         		if (visitedNodePortTuple.empty()) break; //堆栈为空，则完成了遍历
-        		current = visitedNodePortTuple.peek();
+        		current = visitedNodePortTuple.pop();
         		continue; //堆栈不为空，则以栈顶的结点为当前结点，继续遍历
         	}else{
         		//将得到的链路加入Path的链表中
