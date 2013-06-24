@@ -17,13 +17,16 @@
 package net.floodlightcontroller.topology;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.PriorityQueue;
 import java.util.Set;
+import java.util.Stack;
 
 
 import org.slf4j.Logger;
@@ -710,6 +713,8 @@ public class TopologyInstance {
         }
         return result;
     }
+    
+    
 
     protected BroadcastTree getBroadcastTreeForCluster(long clusterId){
         Cluster c = switchClusterMap.get(clusterId);
@@ -841,5 +846,82 @@ public class TopologyInstance {
         // TODO Auto-generated method stub
         return null;
     }
+
+    /**
+     * @author Nathan
+     * @param srcDpid 源SwitchID
+     * @param dstDpid 目标SwitchID
+     * @return 所有路径从srcId到dstId的所有路径
+     */
+    protected ArrayList<Route> getRoutes(long srcDpid, long dstDpid){   
+        if (srcDpid== dstDpid)
+            return null;
+        ArrayList<Route> routes = new ArrayList<Route>();
+        
+        Stack<NodePortTuple> visitedNodePortTuple = new Stack<NodePortTuple>();
+        LinkedList<NodePortTuple> routeLinks = new LinkedList<NodePortTuple>();
+        
+        NodePortTuple current = new NodePortTuple(srcDpid, (short)-1);
+        visitedNodePortTuple.push(current);
+        NodePortTuple tempNode = new NodePortTuple(0, 0);
+        
+        while(true){
+        	//获得当前结点的所有子节点
+        	Set<Short> nextPortsSet = switchPorts.get(current.nodeId);
+        	Short[] nextPorts = (Short[]) nextPortsSet.toArray();
+        	Arrays.sort(nextPorts);
+        	//找出符合要求的下一个结点
+        	short suitableNextPort = -1;
+        	for (short nextPort:nextPorts){
+        		if (nextPort<=current.portId) continue;
+        		tempNode.nodeId = current.nodeId;
+        		tempNode.portId = nextPort;
+        		if (visitedNodePortTuple.contains(tempNode)) continue;
+        		suitableNextPort = nextPort;
+        		break;
+        	}
+        	//没找到符合要求的结点，则深度退回
+        	if (suitableNextPort==-1){
+        		visitedNodePortTuple.pop();
+        		if (visitedNodePortTuple.empty()) break; //堆栈为空，则完成了遍历
+        		current = visitedNodePortTuple.peek();
+        		continue; //堆栈不为空，则以栈顶的结点为当前结点，继续遍历
+        	}else{
+        		//将得到的链路加入Path的链表中
+        		NodePortTuple suitableNodePortTuple = new NodePortTuple(current.nodeId, suitableNextPort);
+        		NodePortTuple nextNodePortTuple = null;
+        		routeLinks.addLast(suitableNodePortTuple);
+        		Set<Link> links = switchPortLinks.get(suitableNodePortTuple);
+        		for (Link link:links){
+        			if (link.getSrc()==current.nodeId){
+        				nextNodePortTuple = new NodePortTuple(link.getDst(), link.getDstPort());
+        				routeLinks.addLast(nextNodePortTuple);
+        				break;
+        			}
+        		}
+        		//结点是否为dst？
+        		if (nextNodePortTuple.nodeId==dstDpid){
+        			//如果是，则生成一个Route，加入到ArrayList中
+        			Route route = new Route(new RouteId(srcDpid, dstDpid),(List<NodePortTuple>) routeLinks.clone());
+        			routes.add(route);
+        			//深度退出，1.删除routeLinks中最后添加的两个 2.更改current
+        			routeLinks.removeLast();
+        			routeLinks.removeLast();
+        			current.portId=suitableNextPort;
+        			continue;
+        		}else{
+        			visitedNodePortTuple.push(new NodePortTuple(current.nodeId, suitableNextPort));
+        			current = new NodePortTuple(nextNodePortTuple.nodeId, (short)-1);
+        			continue;
+        		}
+        	}
+        	
+        }
+        
+    	return routes;
+    }
+    
+
+    	
 }
 

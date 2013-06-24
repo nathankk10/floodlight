@@ -168,6 +168,7 @@ public class TopologyManager implements
     /**
      * Thread for recomputing topology.  The thread is always running,
      * however the function applyUpdates() has a blocking call.
+     * 处理LinkDiscovery通知的链路状态改变，注册下一次运行时间，完成不断调用
      */
     @LogMessageDoc(level="ERROR",
             message="Error in topology instance task thread",
@@ -197,12 +198,18 @@ public class TopologyManager implements
         return;
     }
 
+    
+    /**
+     * 处理从LinkDiscovery处监听到的存放于ldUpdates中的变化
+     * @return
+     */
     public boolean updateTopology() {
         boolean newInstanceFlag;
         linksUpdated = false;
         dtLinksUpdated = false;
         tunnelPortsUpdated = false;
-        applyUpdates();
+        applyUpdates();	//读取ldupdates中的消息完成更新（LINK_UPDATED,LINK_REMOVED,TUNNEL_PORT_ADDED,TUNNEL_PORT_REMOVED)
+        //如果applyUpdates中存在更改，则linksUpdated=true，创建新的TopologyInstance
         newInstanceFlag = createNewInstance();
         lastUpdateTime = new Date();
         informListeners();
@@ -614,15 +621,21 @@ public class TopologyManager implements
         return ti.routeExists(src, dst);
     }
 
+
     @Override
     public ArrayList<Route> getRoutes(long srcDpid, long dstDpid,
                                       boolean tunnelEnabled) {
-        // Floodlight supports single path routing now
-
+        /*
+    	// Floodlight supports single path routing now
         // return single path now
         ArrayList<Route> result=new ArrayList<Route>();
         result.add(getRoute(srcDpid, dstDpid, 0, tunnelEnabled));
         return result;
+        */
+    	
+    	// 此处调用TopologyInstance中的算法计算，返回所有Route
+    	TopologyInstance ti = getCurrentInstance(tunnelEnabled);
+    	return ti.getRoutes(srcDpid, dstDpid);
     }
 
     // ******************
@@ -963,7 +976,7 @@ public class TopologyManager implements
 
     
     /**
-     * 当从FloodlightProvider处有packet_in事件时，调用此函数，若packet_in是BSN LLDP，则doFloodBBDP(sw.getId(),pi,cntx)将该LLDP包发送至所有端口
+     * 当从FloodlightProvider处有packet_in事件时，调用此函数，若packet_in是BSN LLDP，则doFloodBBDP(sw.getId(),pi,cntx)将该LLDP包发送至该switch的所有端口
      * @param sw packet_in的路由器
      * @param pi packet_in
      * @param cntx
@@ -1055,11 +1068,13 @@ public class TopologyManager implements
         Set<NodePortTuple> blockedPorts = new HashSet<NodePortTuple>();
 
         if (!linksUpdated) return false;
+        // 如果没有链路的更新（及各种List的更新），则直接返回
 
         Map<NodePortTuple, Set<Link>> openflowLinks;
         openflowLinks =
                 new HashMap<NodePortTuple, Set<Link>>();
         Set<NodePortTuple> nptList = switchPortLinks.keySet();
+        // 在LINK_UPDATE中得到了switch的port信息
 
         if (nptList != null) {
             for(NodePortTuple npt: nptList) {
