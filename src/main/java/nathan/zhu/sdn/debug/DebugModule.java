@@ -115,6 +115,7 @@ public class DebugModule implements IFloodlightModule,INDebugService {
 					for (int i=0; i<list.size(); i++){
 						OFFlowStatisticsReply flow = (OFFlowStatisticsReply)list.get(i);
 						logger.info("Got Flow: {}",flow);
+						
 					}
 				} catch (IOException e){
 					e.printStackTrace();

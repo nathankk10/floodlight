@@ -11,5 +11,6 @@
   <logger name="LogService" level="WARN"/> <!-- Restlet access logging -->
   <logger name="net.floodlightcontroller" level="INFO"/>
   <logger name="net.floodlightcontroller.logging" level="INFO"/>
-  <logger name="nathan.zhu" level="DEBUG"/>
+  <logger name="nathan.zhu" level="INFO"/>
+  <logger name="cui.zhu" level="DEBUG"/>
 </configuration>

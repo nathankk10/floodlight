@@ -23,6 +23,7 @@ import net.floodlightcontroller.core.web.serializers.UShortSerializer;
 import org.codehaus.jackson.annotate.JsonIgnore;
 import org.codehaus.jackson.map.annotate.JsonSerialize;
 import org.jboss.netty.buffer.ChannelBuffer;
+import org.openflow.util.HexString;
 
 /**
  * Represents an ofp_port_stats structure
@@ -42,6 +43,16 @@ public class OFPortStatisticsReply implements OFStatistics {
     protected long receiveOverrunErrors;
     protected long receiveCRCErrors;
     protected long collisions;
+    
+    @Override
+    public String toString(){
+    	return "OFPortStat [portNum=" + portNumber 
+    			+ " rxPack=" + receivePackets + " rxBytes=" + receiveBytes 
+    			+ " txPack=" + transmitPackets + " txBytes" + transmitBytes
+    			+ "...";
+    }
+    
+    
 
     /**
      * @return the portNumber
