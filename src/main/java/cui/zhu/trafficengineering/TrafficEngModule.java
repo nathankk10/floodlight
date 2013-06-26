@@ -7,6 +7,7 @@ import java.util.Collections;
 import java.util.Date;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
@@ -23,17 +24,23 @@ import net.floodlightcontroller.core.module.FloodlightModuleException;
 import net.floodlightcontroller.core.module.IFloodlightModule;
 import net.floodlightcontroller.core.module.IFloodlightService;
 import net.floodlightcontroller.core.util.SingletonTask;
+import net.floodlightcontroller.devicemanager.IDevice;
+import net.floodlightcontroller.devicemanager.IDeviceService;
+import net.floodlightcontroller.devicemanager.SwitchPort;
 import net.floodlightcontroller.packet.Ethernet;
 import net.floodlightcontroller.restserver.IRestApiService;
 import net.floodlightcontroller.routing.IRoutingService;
+import net.floodlightcontroller.routing.Link;
 import net.floodlightcontroller.routing.Route;
 import net.floodlightcontroller.routing.RouteId;
 import net.floodlightcontroller.threadpool.IThreadPoolService;
 import net.floodlightcontroller.topology.ITopologyListener;
 import net.floodlightcontroller.topology.ITopologyService;
 import net.floodlightcontroller.topology.NodePortTuple;
+import net.floodlightcontroller.util.MACAddress;
 import net.floodlightcontroller.util.OFMessageDamper;
 
+import org.openflow.protocol.OFFlowMod;
 import org.openflow.protocol.OFFlowRemoved;
 import org.openflow.protocol.OFMatch;
 import org.openflow.protocol.OFMessage;
@@ -48,6 +55,7 @@ import org.openflow.protocol.statistics.OFPortStatisticsReply;
 import org.openflow.protocol.statistics.OFPortStatisticsRequest;
 import org.openflow.protocol.statistics.OFStatistics;
 import org.openflow.protocol.statistics.OFStatisticsType;
+import org.python.core.NewCompilerResources;
 import org.python.indexer.ast.NBoolOp.OpType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -60,6 +68,10 @@ public class TrafficEngModule implements IFloodlightModule, ICZTrafficEngService
 	
 	protected static final int OFMESSAGE_DAMPER_CAPACITY = 10000;
 	protected static final int OFMESSAGE_DAMPER_TIMEOUT_MS = 250;
+	protected static final short FLOWMOD_IDLE_TIMEOUT_SEC = 20;
+	protected static final short FLOWMOD_HARD_TIMEOUT_SEC = 0; 
+	protected static final long COOKIE = 0x1234;
+	
 	
 	protected int PORT_STATUS_UPDATE_INTEVAL_MS = 30000;
 	
@@ -69,6 +81,7 @@ public class TrafficEngModule implements IFloodlightModule, ICZTrafficEngService
 	protected IRestApiService restApiService;
 	protected ITopologyService topologyService;
 	protected IRoutingService routingService;
+	protected IDeviceService deviceService;
 	protected IThreadPoolService threadPool;
 	
 	protected OFMessageDamper messageDamper;
@@ -209,6 +222,7 @@ public class TrafficEngModule implements IFloodlightModule, ICZTrafficEngService
 		c.add(ITopologyService.class);
 		c.add(IRoutingService.class);
 		c.add(IThreadPoolService.class);
+		c.add(IDeviceService.class);
 		return c;
 	}
 
@@ -219,6 +233,7 @@ public class TrafficEngModule implements IFloodlightModule, ICZTrafficEngService
 		restApiService = context.getServiceImpl(IRestApiService.class);
 		topologyService = context.getServiceImpl(ITopologyService.class);
 		routingService = context.getServiceImpl(IRoutingService.class);
+		deviceService = context.getServiceImpl(IDeviceService.class);
 		threadPool = context.getServiceImpl(IThreadPoolService.class);
 		logger = LoggerFactory.getLogger(this.getClass());
 		routeMaps = new HashMap<RouteId, ArrayList<Route>>();
@@ -253,7 +268,7 @@ public class TrafficEngModule implements IFloodlightModule, ICZTrafficEngService
 	 * @param pi
 	 */
 	private void doFlood(IOFSwitch sw, OFPacketIn pi, FloodlightContext cntx){
-		
+		// 避免广播风暴的出现，通过topologyService计算，block某些端口的广播，将图变成broadcastTree
 		if (topologyService.isIncomingBroadcastAllowed(sw.getId(), pi.getInPort())==false){
 			logger.debug("doFlood, drop broadcast packet from switch={}",sw);
 			return;
@@ -285,8 +300,111 @@ public class TrafficEngModule implements IFloodlightModule, ICZTrafficEngService
 		}
 	}
 	
-	private void doForwardFlow(IOFSwitch sw, OFPacketIn pi){
-		// TODO
+	private void doForwardFlow(IOFSwitch sw, OFPacketIn pi, FloodlightContext cntx){
+		OFMatch match = new OFMatch();
+		match.loadFromPacket(pi.getPacketData(), pi.getInPort());
+		// 出现packet_in包，则说明这个flow已经down了，还是从flowRouteDatabase中删除吧
+		flowRouteDatabase.deleteFlow(match);
+		IDevice dstDevice = IDeviceService.fcStore.get(cntx, IDeviceService.CONTEXT_DST_DEVICE);
+		if (dstDevice==null){
+			logger.info("doForward: can't find dstDevice, do flood");
+			doFlood(sw, pi, cntx);
+			return;
+		}
+		// dstDevice is located, find route
+		Route route = findBestRouteForFlow(sw, dstDevice, pi);
+		if (route==null){
+			logger.info("can't find a route to forward the packet, doFlood instead");
+			doFlood(sw, pi, cntx);
+			return;
+		}
+		// write flow_mod according to route
+		addFlowReversely(pi, match, route.getPath(), cntx);
+		// save this assignment
+		flowRouteDatabase.addFlowToRoute(match, route);
+		logger.info("add flow to route={}",route);
+	}
+	
+	/**
+	 * 计算从sw至dstDevice的最佳路线
+	 * @param srcSw
+	 * @param pi
+	 * @param dstDevice
+	 * @return
+	 */
+	private Route findBestRouteForFlow (IOFSwitch srcSw, IDevice dstDevice, OFPacketIn pi){
+		// TODO 算法的优化，结合各个链路的信息，暂时只返回跳数最少的一条
+		// TODO 获得dstDevice所在的AttachmentPoint，暂时只支持一个host连接到一个switch上
+		SwitchPort[] dstAPs = dstDevice.getAttachmentPoints();
+		SwitchPort dstAP = dstAPs[0];
+		// 获得从srcSW前往dstDevice所在Switch的路径
+		Long dstDpid = dstAP.getSwitchDPID();
+		Long srcDpid = srcSw.getId();
+		if (dstDpid==srcDpid){
+			//同一个Switch上的转发
+			LinkedList<NodePortTuple> link = new LinkedList<NodePortTuple>();
+			link.addLast(new NodePortTuple(srcDpid, pi.getInPort()));
+			link.addLast(new NodePortTuple(dstDpid, dstAP.getPort()));
+			Route route = new Route(new RouteId(srcDpid, dstDpid), link);
+			return route;
+		}
+		//不同Switch之间的转发
+		ArrayList<Route> routes = getRoutes(srcDpid, dstDpid);
+		Route routeWithoutEnds=routes.get(0);
+		//增加源节点，目标节点
+		LinkedList<NodePortTuple> link = new LinkedList<NodePortTuple>();
+		link.addLast(new NodePortTuple(srcDpid, pi.getInPort()));
+		link.addAll(routeWithoutEnds.getPath());
+		link.addLast(new NodePortTuple(dstDpid, dstAP.getPort()));
+		Route route = new Route(routeWithoutEnds.getId(), link);
+		return route;
+	}
+	
+	private void addFlowReversely (OFPacketIn pi, OFMatch match, List<NodePortTuple> links, FloodlightContext cntx){
+		// 构建所有switch通用的FlowMod指令
+		OFFlowMod fm = (OFFlowMod) floodlightProvider.getOFMessageFactory().getMessage(OFType.FLOW_MOD);
+		OFActionOutput action = new OFActionOutput();
+		action.setMaxLength((short)0xffff);
+		List<OFAction> actions = new ArrayList<OFAction>();
+		actions.add(action);
+		fm.setIdleTimeout(FLOWMOD_IDLE_TIMEOUT_SEC)
+			.setHardTimeout(FLOWMOD_HARD_TIMEOUT_SEC)
+			.setCookie(COOKIE)
+			.setCommand(OFFlowMod.OFPFC_ADD)
+			.setMatch(match)
+			.setActions(actions)
+			.setBufferId(OFPacketOut.BUFFER_ID_NONE)
+			.setLengthU(OFFlowMod.MINIMUM_LENGTH+OFActionOutput.MINIMUM_LENGTH);
+		
+		for (int index=links.size()-1;index>0;index=index-2){
+			long swDpid = links.get(index).getNodeId();
+			short srcPort = links.get(index-1).getPortId();
+			short dstPort = links.get(index).getPortId();
+			//写入流表，将满足match的packet从srcPort转发至dstPort
+			IOFSwitch sw = floodlightProvider.getSwitches().get(swDpid);
+			match.setInputPort(srcPort);
+			fm.setMatch(match);
+			//更改action的输出端口
+			((OFActionOutput)fm.getActions().get(0)).setPort(dstPort);
+			//如果是源，则需要remove的通知，同时，bufferdPacket可以自动处理
+			if (index==1) {
+				fm.setFlags(OFFlowMod.OFPFF_SEND_FLOW_REM);
+				fm.setBufferId(pi.getBufferId());
+			}
+			//写入flow_mod
+			logger.info("写入流表-switch={}，from port{} to port{}",new Object[]{swDpid,srcPort,dstPort});
+			try {
+				messageDamper.write(sw, fm, cntx);
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+			try {
+				fm = fm.clone();
+				sw.flush();
+			} catch (CloneNotSupportedException e) {
+				e.printStackTrace();
+			}
+		}
 	}
 	
 	// ---------------
@@ -331,12 +449,12 @@ public class TrafficEngModule implements IFloodlightModule, ICZTrafficEngService
 			
 			@Override
 			public Command receive(IOFSwitch sw, OFMessage msg, FloodlightContext cntx) {
-				logger.debug("flowRemovedListener被调用");
+				logger.info("flowRemovedListener被调用");
 				if (msg.getType()==OFType.FLOW_REMOVED){
 					OFFlowRemoved flowRemovedMessage = (OFFlowRemoved)msg;
 					OFMatch match = flowRemovedMessage.getMatch();
 					flowRouteDatabase.deleteFlow(match);
-					logger.debug("flowRemovedListener,删除flow：{}",match);
+					logger.info("flowRemovedListener,删除flow：{}",match);
 				}
 				return Command.CONTINUE;
 			}
@@ -375,7 +493,7 @@ public class TrafficEngModule implements IFloodlightModule, ICZTrafficEngService
 					doFlood(sw,pi,cntx);
 				} else {
 					logger.debug("packetInListener,转发:switch={}",sw);
-					doForwardFlow(sw,pi);
+					doForwardFlow(sw,pi,cntx);
 				}
 				//NOTE 此处该事件仍然将继续传递
 				return Command.CONTINUE;
