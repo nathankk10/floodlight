@@ -12,5 +12,5 @@
   <logger name="net.floodlightcontroller" level="INFO"/>
   <logger name="net.floodlightcontroller.logging" level="INFO"/>
   <logger name="nathan.zhu" level="INFO"/>
-  <logger name="cui.zhu" level="DEBUG"/>
+  <logger name="cui.zhu" level="INFO"/>
 </configuration>

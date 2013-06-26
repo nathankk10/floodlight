@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Date;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -13,13 +14,16 @@ import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
+import net.floodlightcontroller.core.FloodlightContext;
 import net.floodlightcontroller.core.IFloodlightProviderService;
+import net.floodlightcontroller.core.IOFMessageListener;
 import net.floodlightcontroller.core.IOFSwitch;
 import net.floodlightcontroller.core.module.FloodlightModuleContext;
 import net.floodlightcontroller.core.module.FloodlightModuleException;
 import net.floodlightcontroller.core.module.IFloodlightModule;
 import net.floodlightcontroller.core.module.IFloodlightService;
 import net.floodlightcontroller.core.util.SingletonTask;
+import net.floodlightcontroller.packet.Ethernet;
 import net.floodlightcontroller.restserver.IRestApiService;
 import net.floodlightcontroller.routing.IRoutingService;
 import net.floodlightcontroller.routing.Route;
@@ -28,22 +32,38 @@ import net.floodlightcontroller.threadpool.IThreadPoolService;
 import net.floodlightcontroller.topology.ITopologyListener;
 import net.floodlightcontroller.topology.ITopologyService;
 import net.floodlightcontroller.topology.NodePortTuple;
+import net.floodlightcontroller.util.OFMessageDamper;
 
+import org.openflow.protocol.OFFlowRemoved;
+import org.openflow.protocol.OFMatch;
+import org.openflow.protocol.OFMessage;
+import org.openflow.protocol.OFPacketIn;
+import org.openflow.protocol.OFPacketOut;
 import org.openflow.protocol.OFPort;
 import org.openflow.protocol.OFStatisticsRequest;
+import org.openflow.protocol.OFType;
+import org.openflow.protocol.action.OFAction;
+import org.openflow.protocol.action.OFActionOutput;
 import org.openflow.protocol.statistics.OFPortStatisticsReply;
 import org.openflow.protocol.statistics.OFPortStatisticsRequest;
 import org.openflow.protocol.statistics.OFStatistics;
 import org.openflow.protocol.statistics.OFStatisticsType;
+import org.python.indexer.ast.NBoolOp.OpType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 
 public class TrafficEngModule implements IFloodlightModule, ICZTrafficEngService {
 
-	private static Logger logger;
+	public static final String PACKET_IN_LISTENER_NAME = "cui.zhu.trafficengineering.packetinlistener";
+	public static final String FLOW_REMOVED_LISTENER_NAME = "cui.zhu.trafficengineering.flowremovedlistener"; 
 	
-	protected int PORT_STATUS_UPDATE_INTEVAL_MS = 3000;
+	protected static final int OFMESSAGE_DAMPER_CAPACITY = 10000;
+	protected static final int OFMESSAGE_DAMPER_TIMEOUT_MS = 250;
+	
+	protected int PORT_STATUS_UPDATE_INTEVAL_MS = 30000;
+	
+	private static Logger logger;
 	
 	protected IFloodlightProviderService floodlightProvider;
 	protected IRestApiService restApiService;
@@ -51,14 +71,21 @@ public class TrafficEngModule implements IFloodlightModule, ICZTrafficEngService
 	protected IRoutingService routingService;
 	protected IThreadPoolService threadPool;
 	
+	protected OFMessageDamper messageDamper;
+	
 	protected ITopologyListener topologyListener;
+	protected IOFMessageListener packetInListener;
+	protected IOFMessageListener flowRemovedListener;
 	
 	protected SingletonTask linkStatusUpdateTask;
 	protected OFStatisticsRequest allPortStatRequest;
 	
+	// 链路信息保存
 	protected Map<RouteId, ArrayList<Route>> routeMaps;
 	protected Map<NodePortTuple, OFPortStatisticsReply> linkStatusMap;
 	
+	// flow（以OFMatch表示）， path（以Route）表示数据
+	protected FlowRouteDatabase flowRouteDatabase;
 	
 	/**
 	 * 定期更新Switch Port信息的Worker Thread
@@ -148,7 +175,7 @@ public class TrafficEngModule implements IFloodlightModule, ICZTrafficEngService
 				routeMaps.put(routeId, routes);
 				return routes;
 			}else{
-				logger.debug("returned routes if null");
+				logger.debug("returned routes is null");
 				return null;
 			}
 		} else {
@@ -194,8 +221,12 @@ public class TrafficEngModule implements IFloodlightModule, ICZTrafficEngService
 		routingService = context.getServiceImpl(IRoutingService.class);
 		threadPool = context.getServiceImpl(IThreadPoolService.class);
 		logger = LoggerFactory.getLogger(this.getClass());
-		initTopologyListener();
 		routeMaps = new HashMap<RouteId, ArrayList<Route>>();
+		flowRouteDatabase = new FlowRouteDatabase();
+		messageDamper = new OFMessageDamper(OFMESSAGE_DAMPER_CAPACITY, EnumSet.of(OFType.FLOW_MOD), OFMESSAGE_DAMPER_TIMEOUT_MS);	//参照ForwardBase模块
+		initTopologyListener();
+		initPacketInListener();
+		initFlowRemovedListener();
 	}
 
 	@Override
@@ -203,12 +234,60 @@ public class TrafficEngModule implements IFloodlightModule, ICZTrafficEngService
 			throws FloodlightModuleException {
 		restApiService.addRestletRoutable(new TrafficEngRoutable());
 		topologyService.addListener(topologyListener);
+		floodlightProvider.addOFMessageListener(OFType.FLOW_REMOVED, flowRemovedListener);
+		floodlightProvider.addOFMessageListener(OFType.PACKET_IN, packetInListener);
 		//跑一个线程，定期更新各路由器Port的使用情况
 		ScheduledExecutorService ses = threadPool.getScheduledExecutor();
 		linkStatusUpdateTask = new SingletonTask(ses, new LinkStatusUpdateWorker());
 		linkStatusUpdateTask.reschedule(0, TimeUnit.MILLISECONDS);
 	}
 
+	
+	// ---------------
+	// 处理PacketIn的方法
+	// ---------------
+	
+	/**
+	 * 将pi广播至sw的所有端口
+	 * @param sw
+	 * @param pi
+	 */
+	private void doFlood(IOFSwitch sw, OFPacketIn pi, FloodlightContext cntx){
+		
+		if (topologyService.isIncomingBroadcastAllowed(sw.getId(), pi.getInPort())==false){
+			logger.debug("doFlood, drop broadcast packet from switch={}",sw);
+			return;
+		}
+		// 构建PacketOut
+		OFPacketOut po = (OFPacketOut) floodlightProvider.getOFMessageFactory().getMessage(OFType.PACKET_OUT);
+		List<OFAction> actions = new ArrayList<OFAction>();
+		// 根据Switch能否区分flood和all，下达不同的action
+		if (sw.hasAttribute(IOFSwitch.PROP_SUPPORTS_OFPP_FLOOD)){
+			actions.add(new OFActionOutput(OFPort.OFPP_FLOOD.getValue(), (short)0xFFFF));
+		} else {
+			actions.add(new OFActionOutput(OFPort.OFPP_ALL.getValue(), (short)0xFFFF));
+		}
+		po.setActions(actions);
+		po.setActionsLength((short) OFActionOutput.MINIMUM_LENGTH);
+		short poLength = (short)(po.getActionsLength()+OFPacketOut.MINIMUM_LENGTH);
+		// see OpenFlow spec 1.1 Page 49
+		po.setBufferId(OFPacketOut.BUFFER_ID_NONE);
+		po.setInPort(pi.getInPort());
+		byte[] packetData = pi.getPacketData();
+		poLength += packetData.length;
+		po.setPacketData(packetData);
+		po.setLength(poLength);
+		logger.debug("Writing flood PacketOut to switch={}",sw);
+		try {
+			messageDamper.write(sw, po, cntx);
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+	}
+	
+	private void doForwardFlow(IOFSwitch sw, OFPacketIn pi){
+		// TODO
+	}
 	
 	// ---------------
 	// ICZTrafficEngService
@@ -221,7 +300,7 @@ public class TrafficEngModule implements IFloodlightModule, ICZTrafficEngService
 	}
 	
 	// ---------------
-	// private methods
+	// private listener init methods
 	// ---------------
 	private void initTopologyListener(){
 		topologyListener = new ITopologyListener() {
@@ -230,6 +309,79 @@ public class TrafficEngModule implements IFloodlightModule, ICZTrafficEngService
 				routeMaps.clear();
 			}
 		};
+	}
+	
+	private void initFlowRemovedListener(){
+		flowRemovedListener = new IOFMessageListener() {
+			
+			@Override
+			public boolean isCallbackOrderingPrereq(OFType type, String name) {
+				return false;
+			}
+			
+			@Override
+			public boolean isCallbackOrderingPostreq(OFType type, String name) {
+				return false;
+			}
+			
+			@Override
+			public String getName() {
+				return FLOW_REMOVED_LISTENER_NAME;
+			}
+			
+			@Override
+			public Command receive(IOFSwitch sw, OFMessage msg, FloodlightContext cntx) {
+				logger.debug("flowRemovedListener被调用");
+				if (msg.getType()==OFType.FLOW_REMOVED){
+					OFFlowRemoved flowRemovedMessage = (OFFlowRemoved)msg;
+					OFMatch match = flowRemovedMessage.getMatch();
+					flowRouteDatabase.deleteFlow(match);
+					logger.debug("flowRemovedListener,删除flow：{}",match);
+				}
+				return Command.CONTINUE;
+			}
+		};
+	}
+	
+	
+	private void initPacketInListener(){
+		packetInListener = new IOFMessageListener() {
+			
+			@Override
+			public boolean isCallbackOrderingPrereq(OFType type, String name) {
+				return false;
+			}
+			
+			@Override
+			public boolean isCallbackOrderingPostreq(OFType type, String name) {
+				return false;
+			}
+			
+			@Override
+			public String getName() {
+				return PACKET_IN_LISTENER_NAME;
+			}
+			
+			@Override
+			public Command receive(IOFSwitch sw, OFMessage msg, FloodlightContext cntx) {
+				logger.debug("packetInListener被调用:switch={}",sw);
+				if (msg.getType()!=OFType.PACKET_IN) return Command.CONTINUE;
+				OFPacketIn pi = (OFPacketIn)msg;
+				Ethernet eth = new Ethernet();
+				eth.deserialize(pi.getPacketData(), 0, pi.getPacketData().length);
+				// 如果是multicast或者Broadcast,则packet_out广播
+				if (eth.isBroadcast() || eth.isMulticast()){
+					logger.debug("packetInListener，广播:switch={}",sw);
+					doFlood(sw,pi,cntx);
+				} else {
+					logger.debug("packetInListener,转发:switch={}",sw);
+					doForwardFlow(sw,pi);
+				}
+				//NOTE 此处该事件仍然将继续传递
+				return Command.CONTINUE;
+			}
+		};
+		
 	}
 
 }

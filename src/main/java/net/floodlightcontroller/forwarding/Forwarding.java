@@ -341,6 +341,7 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule {
                    		"out message to the switch",
                    recommendation=LogMessageDoc.CHECK_SWITCH)
     protected void doFlood(IOFSwitch sw, OFPacketIn pi, FloodlightContext cntx) {
+        
         if (topology.isIncomingBroadcastAllowed(sw.getId(),
                                                 pi.getInPort()) == false) {
             if (log.isTraceEnabled()) {
@@ -348,8 +349,12 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule {
                           "from a blocked port, srcSwitch=[{},{}], linkInfo={}",
                           new Object[] {pi, sw.getId(),pi.getInPort()});
             }
+            log.debug("doFlood, drop broadcast packet, pi={}, " + 
+                          "from a blocked port, srcSwitch=[{},{}], linkInfo={}",
+                          new Object[] {pi, sw.getId(),pi.getInPort()});
             return;
         }
+        
 
         // Set Action to flood
         OFPacketOut po = 
@@ -379,6 +384,8 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule {
                 log.trace("Writing flood PacketOut switch={} packet-in={} packet-out={}",
                           new Object[] {sw, pi, po});
             }
+            log.debug("Writing flood PacketOut switch={} packet-in={} packet-out={}",
+            		new Object[] {sw, pi, po});
             messageDamper.write(sw, po, cntx);
         } catch (IOException e) {
             log.error("Failure writing PacketOut switch={} packet-in={} packet-out={}",
