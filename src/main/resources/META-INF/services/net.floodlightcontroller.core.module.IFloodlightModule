@@ -30,3 +30,4 @@ net.floodlightcontroller.loadbalancer.LoadBalancer
 nathan.zhu.sdn.debug.DebugModule
 nathan.zhu.sdn.loadbalancer.NLoadBalancer
 cui.zhu.trafficengineering.TrafficEngModule
+fi.ee.dynamic.nat.NATController

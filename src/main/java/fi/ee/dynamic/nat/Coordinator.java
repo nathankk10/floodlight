@@ -13,9 +13,9 @@ public class Coordinator {
 		nat_table = new ArrayList<Integer[]>();
 	}
 	
-	public void register_used_port(Integer ip, ArrayList ports){
-		ArrayList<Integer> port_used = port_used_table.get(ip);
-		port_used.addAll(ports);
+	public void register_used_port(Integer ip, ArrayList<Integer> ports){
+		ArrayList<Integer> port_used_list = port_used_table.get(ip);
+		port_used_list.addAll(ports);
 	}
 	
 	

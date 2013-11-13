@@ -7,10 +7,9 @@
   <root level="INFO">
     <appender-ref ref="STDOUT" />
   </root>
-  <logger name="org" level="WARN"/>
-  <logger name="LogService" level="WARN"/> <!-- Restlet access logging -->
+  <logger name="org" level="ERROR"/>
+  <logger name="LogService" level="ERROR"/> <!-- Restlet access logging -->
   <logger name="net.floodlightcontroller" level="INFO"/>
   <logger name="net.floodlightcontroller.logging" level="INFO"/>
-  <logger name="nathan.zhu" level="INFO"/>
-  <logger name="cui.zhu" level="INFO"/>
+  <logger name="fi.ee" level="DEBUG"/>
 </configuration>
