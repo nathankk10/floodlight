@@ -18,7 +18,6 @@ import net.floodlightcontroller.packet.ARP;
 import net.floodlightcontroller.packet.Ethernet;
 
 import org.openflow.protocol.OFMessage;
-import org.openflow.protocol.OFPacketIn;
 import org.openflow.protocol.OFPacketOut;
 import org.openflow.protocol.OFPort;
 import org.openflow.protocol.OFType;
@@ -135,7 +134,7 @@ public class ArpAgent implements IFloodlightModule {
 		        po.setActionsLength((short) OFActionOutput.MINIMUM_LENGTH);
 
 		        // set buffer-id, in-port and packet-data based on packet-in
-		        OFPacketIn pi = (OFPacketIn)msg;
+		        //OFPacketIn pi = (OFPacketIn)msg;
 		        short poLength = (short)(po.getActionsLength() + OFPacketOut.MINIMUM_LENGTH);
 		        po.setBufferId(OFPacketOut.BUFFER_ID_NONE);
 		        

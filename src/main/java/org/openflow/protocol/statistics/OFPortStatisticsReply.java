@@ -23,7 +23,6 @@ import net.floodlightcontroller.core.web.serializers.UShortSerializer;
 import org.codehaus.jackson.annotate.JsonIgnore;
 import org.codehaus.jackson.map.annotate.JsonSerialize;
 import org.jboss.netty.buffer.ChannelBuffer;
-import org.openflow.util.HexString;
 
 /**
  * Represents an ofp_port_stats structure

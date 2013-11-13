@@ -21,7 +21,6 @@ import net.floodlightcontroller.packet.IPv4;
 import net.floodlightcontroller.util.MACAddress;
 
 import org.openflow.protocol.OFMessage;
-import org.openflow.protocol.OFPacketIn;
 import org.openflow.protocol.OFType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -176,7 +175,7 @@ public class NLoadBalancer implements IFloodlightModule{
 				int serverIP = IPv4.toIPv4Address("10.0.0.1");
 				switch (msg.getType()) {
 					case PACKET_IN:
-						OFPacketIn pi = (OFPacketIn)msg;
+						//OFPacketIn pi = (OFPacketIn)msg;
 						//得到cntx中的Ethernet信息
 						Ethernet eth = IFloodlightProviderService.bcStore.get(cntx, IFloodlightProviderService.CONTEXT_PI_PAYLOAD);
 						/* 测试一下从cntx中得到的和从pi.getPacketData()中获得的eth包是否一样，结果一样
