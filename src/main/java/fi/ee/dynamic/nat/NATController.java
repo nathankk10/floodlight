@@ -242,6 +242,9 @@ public class NATController implements IFloodlightModule {
 					logger.debug("dst_ip:{}",IPv4.fromIPv4Address(nw_packet.getDestinationAddress()));
 					int dst_ipv4address = nw_packet.getDestinationAddress();
 					Iterator<? extends IDevice> devices =  deviceService.queryDevices(null, null, dst_ipv4address, null, null);
+					
+					// IPv4
+					// 目标IP在本域中
 					if (devices.hasNext()) 
 					{
 						// 目标IP在本地，直接交由Forwarding模块转发
