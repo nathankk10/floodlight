@@ -3,6 +3,8 @@ package fi.ee.dynamic.nat;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 
 import net.floodlightcontroller.core.FloodlightContext;
@@ -14,11 +16,18 @@ import net.floodlightcontroller.core.module.FloodlightModuleContext;
 import net.floodlightcontroller.core.module.FloodlightModuleException;
 import net.floodlightcontroller.core.module.IFloodlightModule;
 import net.floodlightcontroller.core.module.IFloodlightService;
+import net.floodlightcontroller.devicemanager.IDevice;
+import net.floodlightcontroller.devicemanager.IDeviceService;
 import net.floodlightcontroller.packet.ARP;
 import net.floodlightcontroller.packet.Ethernet;
 import net.floodlightcontroller.packet.IPv4;
+import net.floodlightcontroller.routing.IRoutingService;
+import net.floodlightcontroller.routing.Route;
+import net.floodlightcontroller.topology.NodePortTuple;
 import net.floodlightcontroller.util.MACAddress;
 
+import org.openflow.protocol.OFFlowMod;
+import org.openflow.protocol.OFMatch;
 import org.openflow.protocol.OFMessage;
 import org.openflow.protocol.OFPacketIn;
 import org.openflow.protocol.OFPacketOut;
@@ -27,9 +36,10 @@ import org.openflow.protocol.OFType;
 import org.openflow.protocol.action.OFAction;
 import org.openflow.protocol.action.OFActionOutput;
 import org.python.antlr.PythonParser.return_stmt_return;
-import org.python.modules.cPickle.Pickler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import com.sun.xml.internal.bind.v2.schemagen.xmlschema.Wildcard;
 
 
 public class NATController implements IFloodlightModule {
@@ -38,14 +48,16 @@ public class NATController implements IFloodlightModule {
 	
 	private static Logger logger;
 	private NATController self;
+	private IOFSwitch gatewaySwitch;
 	
 	private IFloodlightProviderService floodlightProvider;
+	private IDeviceService deviceService;
+	private IRoutingService routingService;
 
 	private IOFMessageListener ofMessageListener;
 	private IOFSwitchListener ofSwitchListener; //当网关OvS连接上的时候配置基本流表（ARP，floodlight控制器），这样这些流就不会被影响
 	
 	private String MODULE_NAME = "natcontroller";
-	private String OF_SWITCH_LISTENER_NAME = "natcontroller.ofswitchlistener";
 
 	
 	/**
@@ -65,6 +77,8 @@ public class NATController implements IFloodlightModule {
 	public Collection<Class<? extends IFloodlightService>> getModuleDependencies() {
 		Collection<Class<? extends IFloodlightService>> services = new ArrayList<Class<? extends IFloodlightService>>();
 		services.add(IFloodlightProviderService.class);
+		services.add(IDeviceService.class);
+		services.add(IRoutingService.class);
 		return null;
 	}
 
@@ -77,6 +91,8 @@ public class NATController implements IFloodlightModule {
 		self = this;
 		logger = LoggerFactory.getLogger(this.getClass());
 		floodlightProvider = (IFloodlightProviderService) context.getServiceImpl(IFloodlightProviderService.class);
+		deviceService = (IDeviceService) context.getServiceImpl(IDeviceService.class);
+		routingService = (IRoutingService) context.getServiceImpl(IRoutingService.class);
 		coordinator = new Coordinator();
 		initOFSwitchListener();
 		initOFMessageListener();
@@ -106,7 +122,7 @@ public class NATController implements IFloodlightModule {
 			
 			@Override
 			public String getName() {
-				return OF_SWITCH_LISTENER_NAME;
+				return self.MODULE_NAME;
 			}
 			
 			@Override
@@ -117,6 +133,9 @@ public class NATController implements IFloodlightModule {
 				
 				if ( (switchDPID & 0x00FFFFFFFFFFFFL) != MACAddress.valueOf(Config.NAT_SWITCH_MAC).toLong())
 					return;
+				
+				// 注册gateway switch
+				gatewaySwitch = sw;
 				// 此处对OvS写入ARP静态流表
 				
 				// 此处对OvS写入FloodLight控制链路静态流表
@@ -170,7 +189,7 @@ public class NATController implements IFloodlightModule {
 					ARP arp_packet = (ARP)eth.getPayload();
 					if (arp_packet.getOpCode() == ARP.OP_REQUEST)
 					{
-						logger.debug("ARP REQUEST:{}",arp_packet);
+						//logger.debug("ARP REQUEST:{}",arp_packet);
 						byte[] senderIP = arp_packet.getSenderProtocolAddress();
 						byte[] senderMAC = arp_packet.getSenderHardwareAddress();
 						byte[] targetIP = arp_packet.getTargetProtocolAddress();
@@ -186,7 +205,7 @@ public class NATController implements IFloodlightModule {
 						arp_response.setSenderProtocolAddress(targetIP);
 						arp_response.setTargetHardwareAddress(senderMAC);
 						arp_response.setTargetProtocolAddress(senderIP);
-						logger.debug("Output ARP RESPONSE:{}",arp_response);
+						//logger.debug("Output ARP RESPONSE:{}",arp_response);
 						// make up Ethernet packet
 						Ethernet eth_response = (Ethernet)eth.clone();
 						eth_response.setSourceMACAddress(targetMAC);
@@ -215,14 +234,86 @@ public class NATController implements IFloodlightModule {
 					}
 				}
 				else if (eth.getEtherType() == eth.TYPE_IPv4) {
+					// 不处理广播的IP包
+					if (eth.isMulticast() || eth.isBroadcast())
+						return Command.CONTINUE;
 					// 处理IPv4的数据包
 					IPv4 nw_packet = (IPv4)eth.getPayload();
 					logger.debug("dst_ip:{}",IPv4.fromIPv4Address(nw_packet.getDestinationAddress()));
+					int dst_ipv4address = nw_packet.getDestinationAddress();
+					Iterator<? extends IDevice> devices =  deviceService.queryDevices(null, null, dst_ipv4address, null, null);
+					if (devices.hasNext()) 
+					{
+						// 目标IP在本地，直接交由Forwarding模块转发
+						logger.debug("Device:{}",devices.next());
+						return Command.CONTINUE;
+					}
 					
-				}
+					// 本域不存在这一IP地址，需要由OvS转发
+					// TODO: 1.向Coordianator询问IP地址是否在其他域中，进行怎样的NAT转换 2.向Gateway Switch写入相应的NAT转换流表 3.将数据包Forwarding到目标Gateway Switch
+					
+					// Gateway Switch已经发现
+					if (gatewaySwitch==null){
+						logger.debug("Gateway Switch not connected");
+						return Command.CONTINUE;
+					}
+					// 将IP包送至Gateway Switch
+					OFMatch match = new OFMatch();
+					match.loadFromPacket(of_Pi.getPacketData(), of_Pi.getInPort());
+					
+					OFFlowMod fm = (OFFlowMod) floodlightProvider.getOFMessageFactory().getMessage(OFType.FLOW_MOD);
+					OFActionOutput action = new OFActionOutput();
+					action.setMaxLength((short)0xffff);
+			        List<OFAction> actions = new ArrayList<OFAction>();
+			        actions.add(action);
+
+			        fm.setIdleTimeout(Config.FLOWMOD_DEFAULT_IDLE_TIMEOUT)
+			            .setHardTimeout(Config.FLOWMOD_DEFAULT_HARD_TIMEOUT)
+			            .setBufferId(OFPacketOut.BUFFER_ID_NONE)
+			            .setCommand(OFFlowMod.OFPFC_ADD)
+			            .setMatch(match)
+			            .setActions(actions)
+			            .setLengthU(OFFlowMod.MINIMUM_LENGTH+OFActionOutput.MINIMUM_LENGTH);
+			        
+			        Route route = routingService.getRoute(sw.getId(), of_Pi.getInPort(), gatewaySwitch.getId(), Config.NAT_SWITCH_OUTPORT, 0);
+			        
+			        if (route==null){
+			        	logger.debug("No route");
+			        	return Command.CONTINUE;
+			        }
+			        List<NodePortTuple> switchPortList = route.getPath();
+			        logger.debug("Path: {}",switchPortList);
+			        for (int index = switchPortList.size()-1;index>0;index=index-2){
+			        	long switchDPID = switchPortList.get(index).getNodeId();
+			        	IOFSwitch cur_sw = floodlightProvider.getSwitches().get(switchDPID);
+			        	if (cur_sw==null){
+			        		logger.debug("Switch {} on route not available",switchDPID);
+			        		return Command.CONTINUE;
+			        	}
+			        	if (index == 1){
+			        		// 入口switch，需要重发
+			        		fm.setFlags(OFFlowMod.OFPFF_SEND_FLOW_REM);
+			        	}
+			        	short outPort = switchPortList.get(index).getPortId();
+			        	short inPort = switchPortList.get(index-1).getPortId();
+			        	fm.getMatch().setInputPort(inPort);
+			        	((OFActionOutput)fm.getActions().get(0)).setPort(outPort);
+			        	logger.debug("Route flowmod sw={} inPort={} outPort={}",new Object[] {cur_sw,fm.getMatch().getInputPort(), outPort });
+			        	try {
+							cur_sw.write(fm, cntx);
+						} catch (IOException e) {
+							e.printStackTrace();
+						}
+			        	cur_sw.flush();
+			        }
+					return Command.STOP;
+				}	// endif of Ipv4
+				
+				
+				
 				
 				return Command.CONTINUE;
-			}
+			}	//end of Receive function
 		};
 	}
 
