@@ -1,7 +1,12 @@
 package fi.ee.dynamic.nat;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
+
+import org.python.antlr.PythonParser.return_stmt_return;
+
+import com.kenai.jffi.Array;
 
 public class Coordinator {
 
@@ -18,5 +23,20 @@ public class Coordinator {
 		port_used_list.addAll(ports);
 	}
 	
+	
+	//ARP包的处理
+	public byte[] get_MAC_address (byte[] ipAddress){
+		//test for 
+		if (Arrays.equals(ipAddress, new byte[]{10,0,2,1})){
+			return new byte[]{0,0,0,0,1,2};
+		}
+		if (Arrays.equals(ipAddress, new byte[]{10,0,1,1})){
+			return new byte[]{0,0,0,0,1,1};
+		}
+		if (Arrays.equals(ipAddress, new byte[]{10,0,3,3})){
+			return new byte[]{0,0,0,0,3,3};
+		}
+		return null;
+	}
 	
 }
