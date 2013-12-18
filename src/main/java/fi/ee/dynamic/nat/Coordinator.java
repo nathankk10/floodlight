@@ -4,6 +4,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 
+import net.floodlightcontroller.devicemanager.IDevice;
+
 import org.python.antlr.PythonParser.return_stmt_return;
 
 import com.kenai.jffi.Array;
@@ -24,10 +26,6 @@ public class Coordinator {
 	}
 	
 	
-	public 
-	
-	
-	
 	//ARP包的处理
 	public byte[] get_MAC_address (byte[] ipAddress){
 		//test for 
@@ -41,6 +39,27 @@ public class Coordinator {
 			return new byte[]{0,0,0,0,3,3};
 		}
 		return null;
+	}
+	
+	
+	public NATRecord performNat(NATRecord original){
+		// 根据转换前的流信息，计算NAT转换，并完成
+		return null;
+	}
+	
+	public void deviceRemoved(IDevice device){
+		// TODO
+		return;
+	}
+	
+	public void deviceIPV4AddrChanged(IDevice device){
+		// TODO
+		return;
+	}
+	
+	public void deviceAdded(IDevice device){
+		// TODO
+		return;
 	}
 	
 }

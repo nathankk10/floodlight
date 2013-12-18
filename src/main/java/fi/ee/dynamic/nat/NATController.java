@@ -17,10 +17,12 @@ import net.floodlightcontroller.core.module.FloodlightModuleException;
 import net.floodlightcontroller.core.module.IFloodlightModule;
 import net.floodlightcontroller.core.module.IFloodlightService;
 import net.floodlightcontroller.devicemanager.IDevice;
+import net.floodlightcontroller.devicemanager.IDeviceListener;
 import net.floodlightcontroller.devicemanager.IDeviceService;
 import net.floodlightcontroller.packet.ARP;
 import net.floodlightcontroller.packet.Ethernet;
 import net.floodlightcontroller.packet.IPv4;
+import net.floodlightcontroller.packet.TCP;
 import net.floodlightcontroller.routing.IRoutingService;
 import net.floodlightcontroller.routing.Route;
 import net.floodlightcontroller.topology.NodePortTuple;
@@ -34,13 +36,15 @@ import org.openflow.protocol.OFPacketOut;
 import org.openflow.protocol.OFPort;
 import org.openflow.protocol.OFType;
 import org.openflow.protocol.action.OFAction;
+import org.openflow.protocol.action.OFActionDataLayerDestination;
+import org.openflow.protocol.action.OFActionDataLayerSource;
+import org.openflow.protocol.action.OFActionNetworkLayerDestination;
+import org.openflow.protocol.action.OFActionNetworkLayerSource;
 import org.openflow.protocol.action.OFActionOutput;
-import org.python.antlr.PythonParser.return_stmt_return;
+import org.openflow.protocol.action.OFActionTransportLayerDestination;
+import org.openflow.protocol.action.OFActionTransportLayerSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import com.sun.xml.internal.bind.v2.schemagen.xmlschema.Wildcard;
-
 
 public class NATController implements IFloodlightModule {
 	
@@ -56,6 +60,7 @@ public class NATController implements IFloodlightModule {
 
 	private IOFMessageListener ofMessageListener;
 	private IOFSwitchListener ofSwitchListener; //当网关OvS连接上的时候配置基本流表（ARP，floodlight控制器），这样这些流就不会被影响
+	private IDeviceListener deviceListener;
 	
 	private String MODULE_NAME = "natcontroller";
 
@@ -96,6 +101,7 @@ public class NATController implements IFloodlightModule {
 		coordinator = new Coordinator();
 		initOFSwitchListener();
 		initOFMessageListener();
+		initDeviceListener();
 	}
 
 	@Override
@@ -104,6 +110,7 @@ public class NATController implements IFloodlightModule {
 		logger.debug("NATController is starting up!");
 		floodlightProvider.addOFSwitchListener(ofSwitchListener);
 		floodlightProvider.addOFMessageListener(OFType.PACKET_IN, ofMessageListener);
+		deviceService.addListener(deviceListener);
 	}
 	
 	
@@ -140,10 +147,57 @@ public class NATController implements IFloodlightModule {
 				
 				// 此处对OvS写入FloodLight控制链路静态流表
 				
+				// 此处对OvS写入Floodlight控制器公网转换（连接至Coordinator）的静态流表
+				
 				// 写入上述两个流表后，ARP agent和Floodlight的控制链路被保障
 			}
 		};
 	}
+	
+	private void initDeviceListener(){
+		deviceListener = new IDeviceListener() {
+			
+			@Override
+			public boolean isCallbackOrderingPrereq(String type, String name) {
+				return false;
+			}
+			
+			@Override
+			public boolean isCallbackOrderingPostreq(String type, String name) {
+				return false;
+			}
+			
+			@Override
+			public String getName() {
+				return self.MODULE_NAME;
+			}
+			
+			@Override
+			public void deviceVlanChanged(IDevice device) {
+			}
+			
+			@Override
+			public void deviceRemoved(IDevice device) {
+				coordinator.deviceRemoved(device);
+			}
+			
+			@Override
+			public void deviceMoved(IDevice device) {
+				
+			}
+			
+			@Override
+			public void deviceIPV4AddrChanged(IDevice device) {
+				coordinator.deviceIPV4AddrChanged(device);
+			}
+			
+			@Override
+			public void deviceAdded(IDevice device) {
+				coordinator.deviceAdded(device);
+			}
+		};
+	}
+	
 	
 	private void initOFMessageListener(){
 		ofMessageListener = new IOFMessageListener() {
@@ -185,7 +239,6 @@ public class NATController implements IFloodlightModule {
 				if (eth.getEtherType() == Ethernet.TYPE_ARP) 
 				{	
 					// 处理ARP数据包。由OpenStack给出
-					// or 对ARP包也进行透明传输，广播到所有的不同的域中
 					ARP arp_packet = (ARP)eth.getPayload();
 					if (arp_packet.getOpCode() == ARP.OP_REQUEST)
 					{
@@ -242,8 +295,6 @@ public class NATController implements IFloodlightModule {
 					logger.debug("dst_ip:{}",IPv4.fromIPv4Address(nw_packet.getDestinationAddress()));
 					int dst_ipv4address = nw_packet.getDestinationAddress();
 					Iterator<? extends IDevice> devices =  deviceService.queryDevices(null, null, dst_ipv4address, null, null);
-					
-					// IPv4
 					// 目标IP在本域中
 					if (devices.hasNext()) 
 					{
@@ -254,6 +305,227 @@ public class NATController implements IFloodlightModule {
 					
 					// 本域不存在这一IP地址，需要由OvS转发
 					// TODO: 1.向Coordianator询问IP地址是否在其他域中，进行怎样的NAT转换 2.向Gateway Switch写入相应的NAT转换流表 3.将数据包Forwarding到目标Gateway Switch
+					TCP tcp_packet = (TCP)nw_packet.getPayload();
+					NATRecord original = new NATRecord(nw_packet.getSourceAddress(), tcp_packet.getSourcePort(), nw_packet.getDestinationAddress(), tcp_packet.getDestinationPort());
+					NATRecord target = coordinator.performNat(original);
+					if (target.dst_IPAddress==0){
+						// 不存在相应IP，请求的是公网的地址，则只改变源IP等
+						// outbound
+						OFMatch out_match = new OFMatch();
+						out_match.setWildcards(OFMatch.OFPFW_IN_PORT | OFMatch.OFPFW_NW_TOS);
+						out_match.setInputPort(OFPort.OFPP_ALL.getValue());
+						out_match.setDataLayerSource(eth.getSourceMACAddress());
+						out_match.setDataLayerDestination(eth.getDestinationMACAddress());
+						out_match.setDataLayerType(eth.getEtherType());
+						out_match.setNetworkProtocol(nw_packet.getProtocol());
+						out_match.setNetworkDestination(nw_packet.getDestinationAddress());
+						out_match.setNetworkSource(nw_packet.getSourceAddress());
+						out_match.setNetworkProtocol(nw_packet.getProtocol());
+						out_match.setTransportSource(tcp_packet.getSourcePort());
+						out_match.setTransportDestination(tcp_packet.getDestinationPort());
+						OFFlowMod fm = (OFFlowMod) floodlightProvider.getOFMessageFactory().getMessage(OFType.FLOW_MOD);
+						// action 1: outport
+						OFActionOutput action_output = new OFActionOutput();
+						action_output.setMaxLength((short)0xffff);
+						action_output.setPort(Config.NAT_SWITCH_OUTPORT);
+						// action 2: set DL src to ovs mac
+						OFActionDataLayerSource action_DataLayerSource = new OFActionDataLayerSource();
+						action_DataLayerSource.setDataLayerAddress(MACAddress.valueOf(Config.NAT_SWITCH_MAC).toBytes());
+						// action 3: set DL dst to normal router
+						OFActionDataLayerDestination action_DataLayerDestination = new OFActionDataLayerDestination();
+						action_DataLayerDestination.setDataLayerAddress(MACAddress.valueOf(Config.ROUTER_MAC).toBytes());
+						// action 4: set Src IP address
+						OFActionNetworkLayerSource action_NetworkLayerSource = new OFActionNetworkLayerSource();
+						action_NetworkLayerSource.setNetworkAddress(IPv4.toIPv4Address(Config.PUBLIC_IP));
+						// action 5: set Src TCP port
+						OFActionTransportLayerSource action_TransportLayerSource = new OFActionTransportLayerSource();
+						action_TransportLayerSource.setTransportPort(target.src_IPPort);
+						List<OFAction> actions = new ArrayList<OFAction>();
+						actions.add(action_output);
+						actions.add(action_DataLayerSource);
+						actions.add(action_DataLayerDestination);
+						actions.add(action_NetworkLayerSource);
+						actions.add(action_TransportLayerSource);
+						fm.setIdleTimeout(Config.FLOWMOD_DEFAULT_IDLE_TIMEOUT)
+				            .setHardTimeout(Config.FLOWMOD_DEFAULT_HARD_TIMEOUT)
+				            .setBufferId(OFPacketOut.BUFFER_ID_NONE)
+				            .setCommand(OFFlowMod.OFPFC_ADD)
+				            .setMatch(out_match)
+				            .setActions(actions)
+				            .setLengthU(OFFlowMod.MINIMUM_LENGTH+OFActionOutput.MINIMUM_LENGTH);
+						try {
+							gatewaySwitch.write(fm, cntx);
+							gatewaySwitch.flush();
+						} catch (IOException e) {
+							e.printStackTrace();
+						}
+						//inbound
+						OFMatch in_match = new OFMatch();
+						in_match.setWildcards(OFMatch.OFPFW_IN_PORT | OFMatch.OFPFW_NW_TOS);
+						in_match.setInputPort(OFPort.OFPP_ALL.getValue());
+						in_match.setDataLayerSource(MACAddress.valueOf(Config.ROUTER_MAC).toBytes());
+						in_match.setDataLayerDestination(MACAddress.valueOf(Config.NAT_SWITCH_MAC).toBytes());
+						in_match.setDataLayerType(eth.getEtherType());
+						in_match.setNetworkProtocol(nw_packet.getProtocol());
+						in_match.setNetworkDestination(IPv4.toIPv4Address(Config.PUBLIC_IP));
+						in_match.setNetworkSource(nw_packet.getDestinationAddress());
+						in_match.setNetworkProtocol(nw_packet.getProtocol());
+						in_match.setTransportSource(tcp_packet.getDestinationPort());
+						in_match.setTransportDestination(target.src_IPPort);
+						
+						fm = (OFFlowMod) floodlightProvider.getOFMessageFactory().getMessage(OFType.FLOW_MOD);
+						// action 1: outport
+						action_output = new OFActionOutput();
+						action_output.setMaxLength((short)0xffff);
+						action_output.setPort(of_Pi.getInPort());
+						// action 2: set DL dst to input
+						action_DataLayerDestination = new OFActionDataLayerDestination();
+						action_DataLayerDestination.setDataLayerAddress(eth.getSourceMACAddress());
+						// action 3: set Dst IP address 
+						OFActionNetworkLayerDestination action_NetworkLayerDestination = new OFActionNetworkLayerDestination();
+						action_NetworkLayerDestination.setNetworkAddress(nw_packet.getSourceAddress());
+						// action 4: set Dst TCP port
+						OFActionTransportLayerDestination action_TransportLayerDestination = new OFActionTransportLayerDestination();
+						action_TransportLayerDestination.setTransportPort(tcp_packet.getSourcePort());
+						actions = new ArrayList<OFAction>();
+						actions.add(action_output);
+						actions.add(action_DataLayerDestination);
+						actions.add(action_NetworkLayerDestination);
+						actions.add(action_TransportLayerDestination);
+						fm.setIdleTimeout(Config.FLOWMOD_DEFAULT_IDLE_TIMEOUT)
+				            .setHardTimeout(Config.FLOWMOD_DEFAULT_HARD_TIMEOUT)
+				            .setBufferId(OFPacketOut.BUFFER_ID_NONE)
+				            .setCommand(OFFlowMod.OFPFC_ADD)
+				            .setMatch(in_match)
+				            .setActions(actions)
+				            .setLengthU(OFFlowMod.MINIMUM_LENGTH+OFActionOutput.MINIMUM_LENGTH);
+						try {
+							gatewaySwitch.write(fm, cntx);
+							gatewaySwitch.flush();
+						} catch (IOException e) {
+							e.printStackTrace();
+						}
+					} else {
+						// 存在相应IP，请求的是其他域的地址，则改变源IP、目的IP
+						// outbound
+						OFMatch out_match = new OFMatch();
+						out_match.setWildcards(OFMatch.OFPFW_IN_PORT | OFMatch.OFPFW_NW_TOS);
+						out_match.setInputPort(OFPort.OFPP_ALL.getValue());
+						out_match.setDataLayerSource(eth.getSourceMACAddress());
+						out_match.setDataLayerDestination(eth.getDestinationMACAddress());
+						out_match.setDataLayerType(eth.getEtherType());
+						out_match.setNetworkProtocol(nw_packet.getProtocol());
+						out_match.setNetworkDestination(nw_packet.getDestinationAddress());
+						out_match.setNetworkSource(nw_packet.getSourceAddress());
+						out_match.setNetworkProtocol(nw_packet.getProtocol());
+						out_match.setTransportSource(tcp_packet.getSourcePort());
+						out_match.setTransportDestination(tcp_packet.getDestinationPort());
+						OFFlowMod fm = (OFFlowMod) floodlightProvider.getOFMessageFactory().getMessage(OFType.FLOW_MOD);
+						// action 1: output
+						OFActionOutput action_output = new OFActionOutput();
+						action_output.setMaxLength((short)0xffff);
+						action_output.setPort(Config.NAT_SWITCH_OUTPORT);
+						// action 2: set DL src to ovs mac
+						OFActionDataLayerSource action_DataLayerSource = new OFActionDataLayerSource();
+						action_DataLayerSource.setDataLayerAddress(MACAddress.valueOf(Config.NAT_SWITCH_MAC).toBytes());
+						// action 3: set DL dst to normal router
+						OFActionDataLayerDestination action_DataLayerDestination = new OFActionDataLayerDestination();
+						action_DataLayerDestination.setDataLayerAddress(MACAddress.valueOf(Config.ROUTER_MAC).toBytes());
+						// action 4: set Src IP address
+						OFActionNetworkLayerSource action_NetworkLayerSource = new OFActionNetworkLayerSource();
+						action_NetworkLayerSource.setNetworkAddress(IPv4.toIPv4Address(Config.PUBLIC_IP));
+						// action 5: set Src TCP port
+						OFActionTransportLayerSource action_TransportLayerSource = new OFActionTransportLayerSource();
+						action_TransportLayerSource.setTransportPort(target.src_IPPort);
+						// action 6: set Dst IP address
+						OFActionNetworkLayerDestination action_NetworkLayerDestination = new OFActionNetworkLayerDestination();
+						action_NetworkLayerDestination.setNetworkAddress(target.dst_IPAddress);
+						// action 7: set Dst TCP port
+						OFActionTransportLayerDestination action_TransportLayerDestination = new OFActionTransportLayerDestination();
+						action_TransportLayerDestination.setTransportPort(target.dst_IPPort);
+						List<OFAction> actions = new ArrayList<OFAction>();
+						actions.add(action_output);
+						actions.add(action_DataLayerSource);
+						actions.add(action_DataLayerDestination);
+						actions.add(action_NetworkLayerSource);
+						actions.add(action_TransportLayerSource);
+						actions.add(action_NetworkLayerDestination);
+						actions.add(action_TransportLayerDestination);
+						fm.setIdleTimeout(Config.FLOWMOD_DEFAULT_IDLE_TIMEOUT)
+				            .setHardTimeout(Config.FLOWMOD_DEFAULT_HARD_TIMEOUT)
+				            .setBufferId(OFPacketOut.BUFFER_ID_NONE)
+				            .setCommand(OFFlowMod.OFPFC_ADD)
+				            .setMatch(out_match)
+				            .setActions(actions)
+				            .setLengthU(OFFlowMod.MINIMUM_LENGTH+OFActionOutput.MINIMUM_LENGTH);
+						try {
+							gatewaySwitch.write(fm, cntx);
+							gatewaySwitch.flush();
+						} catch (IOException e) {
+							e.printStackTrace();
+						}
+						//inbound
+						OFMatch in_match = new OFMatch();
+						in_match.setWildcards(OFMatch.OFPFW_IN_PORT | OFMatch.OFPFW_NW_TOS);
+						in_match.setInputPort(OFPort.OFPP_ALL.getValue());
+						in_match.setDataLayerSource(MACAddress.valueOf(Config.ROUTER_MAC).toBytes());
+						in_match.setDataLayerDestination(MACAddress.valueOf(Config.NAT_SWITCH_MAC).toBytes());
+						in_match.setDataLayerType(eth.getEtherType());
+						in_match.setNetworkProtocol(nw_packet.getProtocol());
+						in_match.setNetworkDestination(IPv4.toIPv4Address(Config.PUBLIC_IP));
+						in_match.setNetworkSource(target.dst_IPAddress);
+						in_match.setNetworkProtocol(nw_packet.getProtocol());
+						in_match.setTransportSource(target.dst_IPPort);
+						in_match.setTransportDestination(target.src_IPPort);
+						
+						fm = (OFFlowMod) floodlightProvider.getOFMessageFactory().getMessage(OFType.FLOW_MOD);
+						// action 1: outport
+						action_output = new OFActionOutput();
+						action_output.setMaxLength((short)0xffff);
+						action_output.setPort(of_Pi.getInPort());
+						// action 2: set DL dst to original src
+						action_DataLayerDestination = new OFActionDataLayerDestination();
+						action_DataLayerDestination.setDataLayerAddress(eth.getSourceMACAddress());
+						// action 3: set DL src to original dst
+						action_DataLayerSource = new OFActionDataLayerSource();
+						action_DataLayerSource.setDataLayerAddress(eth.getDestinationMACAddress());
+						// action 4: set NW dst to original src
+						action_NetworkLayerDestination = new OFActionNetworkLayerDestination();
+						action_NetworkLayerDestination.setNetworkAddress(nw_packet.getSourceAddress());
+						// action 5: set NW src to original dst
+						action_NetworkLayerSource = new OFActionNetworkLayerSource();
+						action_NetworkLayerSource.setNetworkAddress(nw_packet.getDestinationAddress());
+						// action 6: set TCP dst to original src
+						action_TransportLayerDestination = new OFActionTransportLayerDestination();
+						action_TransportLayerDestination.setTransportPort(tcp_packet.getSourcePort());
+						// action 7: set TCP src to original dst
+						action_TransportLayerSource = new OFActionTransportLayerSource();
+						action_TransportLayerSource.setTransportPort(tcp_packet.getDestinationPort());
+						
+						actions = new ArrayList<OFAction>();
+						actions.add(action_output);
+						actions.add(action_DataLayerDestination);
+						actions.add(action_DataLayerSource);
+						actions.add(action_NetworkLayerDestination);
+						actions.add(action_NetworkLayerSource);
+						actions.add(action_TransportLayerDestination);
+						actions.add(action_TransportLayerSource);
+						fm.setIdleTimeout(Config.FLOWMOD_DEFAULT_IDLE_TIMEOUT)
+				            .setHardTimeout(Config.FLOWMOD_DEFAULT_HARD_TIMEOUT)
+				            .setBufferId(OFPacketOut.BUFFER_ID_NONE)
+				            .setCommand(OFFlowMod.OFPFC_ADD)
+				            .setMatch(in_match)
+				            .setActions(actions)
+				            .setLengthU(OFFlowMod.MINIMUM_LENGTH+OFActionOutput.MINIMUM_LENGTH);
+						try {
+							gatewaySwitch.write(fm, cntx);
+							gatewaySwitch.flush();
+						} catch (IOException e) {
+							e.printStackTrace();
+						}
+					}
+					
+					
 					
 					// Gateway Switch已经发现
 					if (gatewaySwitch==null){
@@ -310,11 +582,7 @@ public class NATController implements IFloodlightModule {
 			        	cur_sw.flush();
 			        }
 					return Command.STOP;
-				}	// endif of Ipv4
-				
-				
-				
-				
+				}	// endif of Ipv4				
 				return Command.CONTINUE;
 			}	//end of Receive function
 		};
